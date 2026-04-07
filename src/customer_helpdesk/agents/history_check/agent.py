@@ -3,6 +3,7 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool
 from ...config import get_settings
 from ...services.database import get_user_tickets, search_similar_tickets
+from ...services.query_cache import get_query_result, set_query_result
 
 settings = get_settings()
 
@@ -26,9 +27,15 @@ async def lookup_user_history(user_id: str, limit: int = 5) -> dict:
 
 
 async def lookup_similar_issues(query: str, category: str, limit: int = 3) -> dict:
-    """Search for similar resolved tickets"""
+    """Search for similar resolved tickets with caching (5 min TTL)."""
+    # Check cache first
+    cached = await get_query_result("similar", query)
+    if cached is not None:
+        return cached
+
+    # Cache miss - query database
     tickets = await search_similar_tickets(query, category, limit)
-    return {
+    result = {
         "status": "success",
         "similar_tickets": [
             {
@@ -41,6 +48,10 @@ async def lookup_similar_issues(query: str, category: str, limit: int = 3) -> di
         ],
     }
 
+    # Cache result with 300s TTL
+    await set_query_result("similar", query, result)
+    return result
+
 
 HISTORY_TOOLS = [
     FunctionTool(func=lookup_user_history),
@@ -50,7 +61,7 @@ HISTORY_TOOLS = [
 HISTORY_INSTRUCTION = """You are a history lookup agent.
 
 Use the provided tools to gather context:
-1. lookup_user_history - Get recent tickets for the user from session.user_id
+1. lookup_user_history - Get recent tickets for the user from session.state.user_id
 2. lookup_similar_issues - Search for similar resolved tickets by category
 
 Return a JSON summary with both user history and similar issues.

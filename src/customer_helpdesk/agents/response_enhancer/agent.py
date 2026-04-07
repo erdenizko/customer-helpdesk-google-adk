@@ -3,8 +3,16 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool
 from ...config import get_settings
 from ...services.vector_store import get_vector_store
+from ...services.embedding_cache import get_embedding
+from ...services.query_cache import QueryCache
+from ...services.cache_service import CacheService
 
 settings = get_settings()
+_cache_service = CacheService(
+    redis_url=settings.upstash_redis_rest_url,
+    redis_token=settings.upstash_redis_rest_token,
+)
+_query_cache = QueryCache(_cache_service)
 
 
 async def rag_retrieve(query: str, category: str, limit: int = 3) -> dict:
@@ -12,7 +20,6 @@ async def rag_retrieve(query: str, category: str, limit: int = 3) -> dict:
 
     Only performs RAG for technical queries. Returns empty results for other categories.
     """
-    vs = await get_vector_store()
     # Only search for technical queries
     if category != "technical":
         return {
@@ -22,13 +29,24 @@ async def rag_retrieve(query: str, category: str, limit: int = 3) -> dict:
             "reason": "RAG only available for technical queries",
         }
 
-    # In production, embed query first
-    # For now, return empty if category != "technical"
+    cached_result = await _query_cache.get_query_result(category, query)
+    if cached_result is not None:
+        return {
+            "status": "success",
+            "results": cached_result["results"],
+            "skipped": False,
+        }
+
+    vs = await get_vector_store()
+    query_vector = await get_embedding(query, _cache_service)
     results = await vs.search(
-        query_vector=[0.0] * 1536,  # Placeholder - real impl uses embeddings
+        query_vector=query_vector,
         filter_conditions={"category": {"$eq": category}},
         limit=limit,
     )
+
+    await _query_cache.set_query_result(category, query, {"results": results})
+
     return {"status": "success", "results": results, "skipped": False}
 
 
