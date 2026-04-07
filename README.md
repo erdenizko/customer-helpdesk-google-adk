@@ -1,4 +1,4 @@
-# Example Project - Customer Helpdesk Google ADK
+# Customer Helpdesk Google ADK
 
 A production-ready 3-agent customer helpdesk system built with Google ADK and FastAPI. Features parallel agent execution, RAG augmentation for technical queries, and NeonDB-backed session persistence.
 
