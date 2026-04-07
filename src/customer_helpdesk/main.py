@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from google.adk.runners import Runner
 from .services.session_service import DatabaseSessionService
+from .services.validation import validate_final_response
 from google.genai import types
 from contextlib import asynccontextmanager
 import uuid
@@ -12,6 +14,7 @@ import logging
 from .agent import root_agent
 from .logging_config import configure_logging
 from .config import get_settings
+from .models.errors import ErrorResponse, ErrorCode
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -47,7 +50,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Customer Helpdesk API", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins)
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -65,6 +68,7 @@ async def chat(request: ChatRequest):
             app_name=settings.app_name,
             user_id=user_id,
             session_id=session_id,
+            state={"user_id": user_id},
         )
 
     runner = Runner(
@@ -89,11 +93,36 @@ async def chat(request: ChatRequest):
                     if part.text:
                         response_text += part.text
 
+        try:
+            validate_final_response(response_text)
+        except Exception as validation_error:
+            correlation_id = str(uuid.uuid4())[:8]
+            logger.error(
+                f"Validation failed [{correlation_id}]: {validation_error}",
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(
+                    error_code=ErrorCode.VALIDATION_ERROR,
+                    message="An error occurred while validating the response. Please try again.",
+                    correlation_id=correlation_id,
+                ).model_dump(),
+            )
+
         return ChatResponse(response=response_text, session_id=session_id)
 
     except Exception as e:
-        logger.error(f"Agent error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        correlation_id = str(uuid.uuid4())[:8]
+        logger.error(f"Agent error [{correlation_id}]: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error_code=ErrorCode.AGENT_ERROR,
+                message="An error occurred while processing your request. Please try again.",
+                correlation_id=correlation_id,
+            ).model_dump(),
+        )
 
 
 @app.get("/health")
