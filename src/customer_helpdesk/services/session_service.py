@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Base
 from .database import async_session_factory, engine
+from ..utils.json_utils import safe_json_parse
 
 
 @dataclass
@@ -104,7 +105,7 @@ class DatabaseSessionService:
             app_name=row[0],
             user_id=row[1],
             session_id=row[2],
-            state=row[3] if isinstance(row[3], dict) else json.loads(row[3]),
+            state=safe_json_parse(row[3]),
             create_time=row[4],
             update_time=row[5],
         )
@@ -167,7 +168,7 @@ class DatabaseSessionService:
                 app_name=row[0],
                 user_id=row[1],
                 session_id=row[2],
-                state=row[3] if isinstance(row[3], dict) else json.loads(row[3]),
+                state=safe_json_parse(row[3]),
                 create_time=row[4],
                 update_time=row[5],
             )
